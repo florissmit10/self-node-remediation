@@ -43,9 +43,10 @@ used for both the operator and the agent.
 
 ### Using Helm
 
-The Helm chart in `dist/chart` installs the same resources and also needs cert-manager.
+The Helm chart installs the same resources and also needs cert-manager.
+It is published with the releases (older releases have no chart; install those with OLM).
 Helm does not label the namespace, so create it with the `privileged` Pod Security level first.
-Run this from a checkout of the repository at a release tag that includes the chart:
+Use the release version without the leading `v`:
 
 ```bash
 kubectl create namespace self-node-remediation
@@ -53,8 +54,12 @@ kubectl label namespace self-node-remediation \
   pod-security.kubernetes.io/enforce=privileged \
   pod-security.kubernetes.io/audit=privileged \
   pod-security.kubernetes.io/warn=privileged
-helm install self-node-remediation dist/chart --namespace self-node-remediation
+helm install self-node-remediation oci://quay.io/medik8s/charts/self-node-remediation \
+  --version <version> --namespace self-node-remediation
 ```
+
+To install from source, check out the repository at a release tag that includes the chart and use
+`dist/chart` instead of the OCI reference.
 
 The agent uses the operator image unless `agent.image` is set. See `dist/chart/values.yaml` for the
 configurable values. The CRDs are kept when the chart is uninstalled, so existing resources survive

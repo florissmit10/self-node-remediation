@@ -89,12 +89,22 @@ jobs:
             * Operator: quay.io/medik8s/self-node-remediation-operator:v${{ inputs.version }}
             * Bundle: quay.io/medik8s/self-node-remediation-operator-bundle:v${{ inputs.version }}
             * Catalog aka Index: quay.io/medik8s/self-node-remediation-operator-catalog:v${{ inputs.version }}
+            * Helm chart: oci://quay.io/medik8s/charts/self-node-remediation, version ${{ inputs.version }}
 
             ### Source code and OLM manifests
             Please find the source code, the OLM manifests and the install manifest for installation without OLM (`install.yaml`) in the `Assets` section below.
           files: |
             bundle.tar.gz
             dist/install.yaml
+
+      - name: Push Helm chart
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+        run: |
+          make helm
+          echo "${QUAY_PASSWORD}" | ./bin/helm registry login quay.io --username "${QUAY_USERNAME}" --password-stdin
+          VERSION=$VERSION make helm-push
 
   create_k8s_release_pr:
     if: inputs.operation == 'create_k8s_release_pr'
