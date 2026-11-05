@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: self-node-remediation
+namePrefix: self-node-remediation-
+
+labels:
+- pairs:
+    self-node-remediation-operator: ""
+
+resources:
+- ../../certmanager

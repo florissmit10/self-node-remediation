@@ -22,5 +22,24 @@ The operator is available in [operator hub](https://operatorhub.io/operator/self
 
 Self Node Remediation works best together with [Node Health Check Operator](https://operatorhub.io/operator/node-healthcheck-operator)
 
+## Installation without OLM
+
+On Kubernetes without OLM, SNR can be installed with the `install.yaml` manifest attached to the
+[releases](https://github.com/medik8s/self-node-remediation/releases). Older releases don't have
+this asset; install those with OLM. It needs
+[cert-manager](https://cert-manager.io/docs/installation/) for the webhook serving certificate.
+
+```bash
+kubectl apply --server-side -f https://github.com/medik8s/self-node-remediation/releases/download/v<version>/install.yaml
+```
+
+SNR is installed into the `self-node-remediation` namespace. The operator runs its agent as a
+privileged DaemonSet in that namespace, so the manifest labels the namespace with the `privileged`
+[Pod Security Standard](https://kubernetes.io/docs/concepts/security/pod-security-admission/).
+
+To build the manifest from source, run `make build-installer VERSION=<version>`, with the version
+without the leading `v`, which writes `dist/install.yaml`. Use `IMG` to set a different image; it is
+used for both the operator and the agent.
+
 ## Help
 Feel free to join our google group to get more info - https://groups.google.com/g/medik8s

@@ -1,0 +1,76 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../default
+- certmanager
+
+patches:
+- path: manager_webhook_patch.yaml
+- path: namespace_patch.yaml
+- path: webhookcainjection_patch.yaml
+  target:
+    group: admissionregistration.k8s.io
+    kind: (Validating|Mutating)WebhookConfiguration
+
+replacements:
+- source:
+    kind: Deployment
+    name: self-node-remediation-controller-manager
+    fieldPath: spec.template.spec.containers.[name=manager].image
+  targets:
+  - select:
+      kind: Deployment
+      name: self-node-remediation-controller-manager
+    fieldPaths:
+    - spec.template.spec.containers.[name=manager].env.[name=SELF_NODE_REMEDIATION_IMAGE].value
+- source:
+    kind: Service
+    name: self-node-remediation-webhook-service
+    fieldPath: metadata.name
+  targets:
+  - select:
+      kind: Certificate
+      name: self-node-remediation-serving-cert
+    fieldPaths:
+    - spec.dnsNames.0
+    - spec.dnsNames.1
+    options:
+      delimiter: .
+- source:
+    kind: Service
+    name: self-node-remediation-webhook-service
+    fieldPath: metadata.namespace
+  targets:
+  - select:
+      kind: Certificate
+      name: self-node-remediation-serving-cert
+    fieldPaths:
+    - spec.dnsNames.0
+    - spec.dnsNames.1
+    options:
+      delimiter: .
+      index: 1
+- source:
+    kind: Certificate
+    name: self-node-remediation-serving-cert
+    fieldPath: metadata.namespace
+  targets:
+  - select:
+      group: admissionregistration.k8s.io
+    fieldPaths:
+    - metadata.annotations.[cert-manager.io/inject-ca-from]
+    options:
+      delimiter: /
+- source:
+    kind: Certificate
+    name: self-node-remediation-serving-cert
+    fieldPath: metadata.name
+  targets:
+  - select:
+      group: admissionregistration.k8s.io
+    fieldPaths:
+    - metadata.annotations.[cert-manager.io/inject-ca-from]
+    options:
+      delimiter: /
+      index: 1

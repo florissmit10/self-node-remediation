@@ -267,6 +267,14 @@ deploy: manifests kustomize envsubst ## Deploy controller to the K8s cluster spe
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete -f -
 
+.PHONY: build-installer
+build-installer: manifests kustomize ## Generate dist/install.yaml for installing SNR without OLM (requires cert-manager)
+	mkdir -p dist
+	tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
+	cp -R config "$$tmp/" && \
+	(cd "$$tmp/config/manager" && $(KUSTOMIZE) edit set image controller=${IMG}) && \
+	$(KUSTOMIZE) build "$$tmp/config/standalone" > dist/install.yaml
+
 ##@ Build Dependencies
 
 CONTROLLER_GEN_BIN_FOLDER = $(shell pwd)/bin/controller-gen
