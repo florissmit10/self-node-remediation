@@ -1,0 +1,17 @@
+apiVersion: v2
+name: self-node-remediation
+description: Self Node Remediation remediates unhealthy nodes by rebooting them, without a management interface such as a BMC
+type: application
+home: https://www.medik8s.io
+sources:
+  - https://github.com/medik8s/self-node-remediation
+icon: https://raw.githubusercontent.com/medik8s/self-node-remediation/main/config/assets/snr_icon_blue.png
+version: 5.8.0
+appVersion: "v5.8.0"
+keywords:
+  - kubernetes
+  - operator
+  - medik8s
+  - remediation
+annotations:
+  kubebuilder.io/generated-by: kubebuilder

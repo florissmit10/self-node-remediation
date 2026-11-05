@@ -1,0 +1,146 @@
+name: Helm Chart
+
+on:
+  push:
+    branches: [main*, medik8s-*, release-*]
+  pull_request:
+    branches: ['**']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify chart
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Verify that the chart is up to date
+        run: make verify-helm-chart
+
+      - name: Lint chart
+        run: bin/helm lint dist/chart
+
+  install:
+    name: Install chart on Kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMG: localhost/self-node-remediation-operator:ci
+      NAMESPACE: self-node-remediation
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install helm
+        run: |
+          make helm
+          echo "${GITHUB_WORKSPACE}/bin" >> "${GITHUB_PATH}"
+
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: snr-chart
+
+      - name: Build and load operator image
+        run: |
+          docker build -t "${IMG}" .
+          kind load docker-image "${IMG}" --name snr-chart
+
+      - name: Install cert-manager
+        run: |
+          helm install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+            --version v1.19.1 \
+            --namespace cert-manager \
+            --create-namespace \
+            --set crds.enabled=true \
+            --wait \
+            --timeout 5m
+
+      - name: Install chart
+        run: |
+          kubectl create namespace "${NAMESPACE}"
+          kubectl label namespace "${NAMESPACE}" \
+            pod-security.kubernetes.io/enforce=privileged \
+            pod-security.kubernetes.io/audit=privileged \
+            pod-security.kubernetes.io/warn=privileged
+          helm install self-node-remediation dist/chart \
+            --namespace "${NAMESPACE}" \
+            --set manager.image.repository="${IMG%:*}" \
+            --set manager.image.tag="${IMG##*:}" \
+            --set manager.replicas=1 \
+            --wait \
+            --timeout 5m
+          kubectl -n "${NAMESPACE}" wait pod -l control-plane=controller-manager --for=condition=Ready --timeout=5m
+
+      - name: Verify the default configuration and template
+        run: |
+          for _ in $(seq 1 30); do
+            kubectl -n "${NAMESPACE}" get selfnoderemediationconfig self-node-remediation-config && \
+              kubectl -n "${NAMESPACE}" get selfnoderemediationtemplate self-node-remediation-automatic-strategy-template && \
+              exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Verify the agent DaemonSet
+        run: |
+          for _ in $(seq 1 30); do
+            kubectl -n "${NAMESPACE}" get daemonset self-node-remediation-ds && break
+            sleep 2
+          done
+          kubectl -n "${NAMESPACE}" rollout status daemonset/self-node-remediation-ds --timeout=5m
+          image=$(kubectl -n "${NAMESPACE}" get daemonset self-node-remediation-ds \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+          test "${image}" = "${IMG}"
+          nodes=$(kubectl get nodes --no-headers | wc -l)
+          ready=$(kubectl -n "${NAMESPACE}" get daemonset self-node-remediation-ds -o jsonpath='{.status.numberReady}')
+          test "${ready}" -eq "${nodes}"
+
+      - name: Verify the validating webhook
+        run: |
+          if out=$(kubectl apply -f - 2>&1 <<EOF
+          apiVersion: self-node-remediation.medik8s.io/v1alpha1
+          kind: SelfNodeRemediationConfig
+          metadata:
+            name: invalid
+            namespace: ${NAMESPACE}
+          spec: {}
+          EOF
+          ); then
+            echo "webhook accepted a second SelfNodeRemediationConfig"
+            exit 1
+          fi
+          echo "${out}"
+          echo "${out}" | grep -q "a name other than self-node-remediation-config is not allowed"
+
+      - name: Uninstall chart
+        run: |
+          kubectl -n "${NAMESPACE}" delete selfnoderemediationconfig self-node-remediation-config --wait
+          helm uninstall self-node-remediation --namespace "${NAMESPACE}" --wait
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl -n "${NAMESPACE}" describe deployment
+          kubectl -n "${NAMESPACE}" describe daemonset
+          kubectl -n "${NAMESPACE}" logs deployment/self-node-remediation-controller-manager --all-containers || true

@@ -1,0 +1,18 @@
+{{- if .Values.serviceAccount.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+    {{- with .Values.serviceAccount.labels }}
+    {{- with omit . "self-node-remediation-operator" }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- end }}
+  {{- with .Values.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  name: {{ include "self-node-remediation.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,11 @@
+{{- if .Values.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: {{ include "self-node-remediation.resourceName" (dict "suffix" "selfsigned-issuer" "context" $) }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+{{- end }}

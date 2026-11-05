@@ -36,6 +36,11 @@ OCP_VERSION = 4.20
 YQ_API_VERSION = v4
 YQ_VERSION = v4.53.2
 
+# https://github.com/kubernetes-sigs/kubebuilder/releases
+KUBEBUILDER_VERSION = v4.16.0
+# https://github.com/helm/helm/releases
+HELM_VERSION = v3.22.1
+
 OPERATOR_NAME ?= self-node-remediation
 OPERATOR_NAMESPACE ?= openshift-workload-availability
 
@@ -267,6 +272,22 @@ deploy: manifests kustomize envsubst ## Deploy controller to the K8s cluster spe
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete -f -
 
+.PHONY: helm-chart
+helm-chart: build-installer kubebuilder yq ## Generate the Helm chart in dist/chart from dist/install.yaml
+	$(KUBEBUILDER) edit --plugins=helm/v2-alpha --manifests=dist/install.yaml --output-dir=dist
+	$(YQ) -i '.version = "$(VERSION)" | .appVersion = "$(IMAGE_TAG)"' dist/chart/Chart.yaml
+	sed -i.bak 's/{{- toYaml .Values.manager.env | nindent 10 }}/{{- tpl (toYaml .Values.manager.env) $$ | nindent 10 }}/' dist/chart/templates/manager/manager.yaml
+	sed -i.bak 's/app.kubernetes.io\/name: {{ include "self-node-remediation.name" . }}/self-node-remediation-operator: ""/' dist/chart/templates/network-policy/*.yaml dist/chart/templates/prometheus/*.yaml
+	rm -f dist/chart/templates/*/*.yaml.bak
+
+.PHONY: verify-helm-chart
+verify-helm-chart: helm-chart helm ## Verify that dist/chart is up to date and renders the same resources as dist/install.yaml
+	@if [ -n "$$(git status --porcelain -- dist/chart)" ]; then \
+		git status --porcelain -- dist/chart; git diff -- dist/chart; \
+		echo "dist/chart is not up to date, run 'make helm-chart' and commit the changes"; exit 1; \
+	fi
+	YQ=$(YQ) HELM=$(HELM) ./hack/verify-helm-chart.sh
+
 .PHONY: build-installer
 build-installer: manifests kustomize ## Generate dist/install.yaml for installing SNR without OLM (requires cert-manager)
 	mkdir -p dist
@@ -450,6 +471,16 @@ e2e-test:
 	# KUBECONFIG must be set to the cluster, and SNR needs to be deployed already
     # count arg makes the test ignoring cached test results
 	go test ./e2e -ginkgo.vv -test.v -timeout 80m -count=1 ${TEST_OPS}
+
+KUBEBUILDER = $(shell pwd)/bin/kubebuilder
+.PHONY: kubebuilder
+kubebuilder: ## Download kubebuilder locally if necessary.
+	@$(call go-install-tool,$(KUBEBUILDER),sigs.k8s.io/kubebuilder/v4@$(KUBEBUILDER_VERSION))
+
+HELM = $(shell pwd)/bin/helm
+.PHONY: helm
+helm: ## Download helm locally if necessary.
+	@$(call go-install-tool,$(HELM),helm.sh/helm/v3/cmd/helm@$(HELM_VERSION))
 
 YQ = $(shell pwd)/bin/yq
 .PHONY: yq

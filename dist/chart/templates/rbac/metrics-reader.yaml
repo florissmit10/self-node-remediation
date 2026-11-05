@@ -1,0 +1,13 @@
+{{- if and .Values.metrics.enabled .Values.metrics.secure }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: {{ include "self-node-remediation.resourceName" (dict "suffix" "metrics-reader" "context" $) }}
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+{{- end }}

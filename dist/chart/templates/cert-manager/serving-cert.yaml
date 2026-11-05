@@ -1,0 +1,17 @@
+{{- if and .Values.certManager.enabled .Values.webhook.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  labels:
+    self-node-remediation-operator: ""
+  name: {{ include "self-node-remediation.resourceName" (dict "suffix" "serving-cert" "context" $) }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  dnsNames:
+  - {{ include "self-node-remediation.resourceName" (dict "suffix" "webhook-service" "context" $) }}.{{ .Release.Namespace }}.svc
+  - {{ include "self-node-remediation.resourceName" (dict "suffix" "webhook-service" "context" $) }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "self-node-remediation.resourceName" (dict "suffix" "selfsigned-issuer" "context" $) }}
+  secretName: webhook-server-cert
+{{- end }}
