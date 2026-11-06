@@ -55,6 +55,9 @@ func NewWatchdogRebooter(wd watchdog.Watchdog, log logr.Logger) Rebooter {
 }
 
 func (r *watchdogRebooter) Reboot() error {
+	if err := RecordSelfReboot(time.Now()); err != nil {
+		r.log.Error(err, "failed to record self reboot")
+	}
 	if r.wd == nil {
 		r.log.Info("no watchdog is present on this host, trying software reboot")
 		//we couldn't init a watchdog so far but requested to be rebooted. we issue a software reboot

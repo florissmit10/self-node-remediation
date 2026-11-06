@@ -600,7 +600,11 @@ func (r *SelfNodeRemediationReconciler) didIRebootMyself(snr *v1alpha1.SelfNodeR
 		return false, err
 	}
 
-	return uptime < time.Since(snr.CreationTimestamp.Time), nil
+	rebooted, err := reboot.RebootedAfter(time.Now().Add(-uptime), snr.CreationTimestamp.Time)
+	if err != nil {
+		r.logger.Error(err, "failed to read self reboot marker")
+	}
+	return rebooted, nil
 }
 
 // isNodeRebootCapable checks if the node is capable to reboot itself when it becomes unhealthy
