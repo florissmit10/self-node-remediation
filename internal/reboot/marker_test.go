@@ -42,3 +42,35 @@ func TestRebootedAfter(t *testing.T) {
 func ptr(t time.Time) *time.Time {
 	return &t
 }
+
+func TestRebootedItselfRecently(t *testing.T) {
+	now := time.Date(2026, 11, 6, 14, 42, 1, 0, time.UTC)
+	cases := []struct {
+		name     string
+		decided  *time.Time
+		bootTime time.Time
+		want     bool
+	}{
+		{name: "no self reboot recorded", bootTime: now.Add(-time.Minute), want: false},
+		{name: "booted after a self reboot a minute ago", decided: ptr(now.Add(-63 * time.Second)), bootTime: now.Add(-60 * time.Second), want: true},
+		{name: "self reboot decided but not booted since", decided: ptr(now.Add(-10 * time.Second)), bootTime: now.Add(-time.Hour), want: false},
+		{name: "self reboot too long ago", decided: ptr(now.Add(-10 * time.Minute)), bootTime: now.Add(-9 * time.Minute), want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			selfRebootMarkerPath = filepath.Join(t.TempDir(), "self-reboot")
+			if c.decided != nil {
+				if err := RecordSelfReboot(*c.decided); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := RebootedItselfRecently(c.bootTime, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
+				t.Fatalf("RebootedItselfRecently = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

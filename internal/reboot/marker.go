@@ -11,6 +11,8 @@ import (
 
 const SelfRebootLeadWindow = 2 * time.Minute
 
+const RecentSelfRebootWindow = 5 * time.Minute
+
 var selfRebootMarkerPath = "/proc/1/root/var/lib/self-node-remediation/self-reboot"
 
 func RecordSelfReboot(at time.Time) error {
@@ -74,4 +76,12 @@ func RebootedAfter(bootTime, remediationCreated time.Time) (bool, error) {
 		return false, err
 	}
 	return bootTime.After(decided) && decided.After(remediationCreated.Add(-SelfRebootLeadWindow)), nil
+}
+
+func RebootedItselfRecently(bootTime, now time.Time) (bool, error) {
+	decided, ok, err := LastSelfReboot()
+	if err != nil || !ok {
+		return false, err
+	}
+	return bootTime.After(decided) && now.Sub(decided) < RecentSelfRebootWindow, nil
 }

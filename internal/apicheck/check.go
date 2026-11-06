@@ -117,7 +117,7 @@ func (c *ApiConnectivityCheck) Start(ctx context.Context) error {
 		if c.isControlPlane() {
 			// Directly check peer reachability to detect isolation.
 			// Skip errorCount threshold since readyz succeeded (not an API error).
-			canBeReached, cpUnhealthy := c.getControlPlanePeersStatus(ctx)
+			canBeReached, cpUnhealthy := c.controlPlanePeersStatus(ctx)
 
 			// If CP peers say we're unhealthy, trigger remediation immediately
 			if cpUnhealthy {
@@ -167,7 +167,7 @@ func (c *ApiConnectivityCheck) isConsideredHealthy(ctx context.Context) bool {
 	if !c.isControlPlane() {
 		return workerPeersResponse.IsHealthy
 	}
-	canBeReached, cpUnhealthy := c.getControlPlanePeersStatus(ctx)
+	canBeReached, cpUnhealthy := c.controlPlanePeersStatus(ctx)
 	if cpUnhealthy {
 		c.config.Log.Info("Peer control plane nodes reported this node as unhealthy, triggering remediation")
 		return false
@@ -458,4 +458,25 @@ func (c *ApiConnectivityCheck) sumPeersResponses(nodesBatchCount int, responsesC
 	}
 
 	return healthyResponses, unhealthyResponses, apiErrorsResponses, noResponse
+}
+
+func (c *ApiConnectivityCheck) controlPlanePeersStatus(ctx context.Context) (bool, bool) {
+	canBeReached, cpUnhealthy := c.getControlPlanePeersStatus(ctx)
+	if !cpUnhealthy {
+		return canBeReached, cpUnhealthy
+	}
+	uptime, err := utils.GetLinuxUptime()
+	if err != nil {
+		c.config.Log.Error(err, "failed to get node's uptime")
+		return canBeReached, cpUnhealthy
+	}
+	rebooted, err := reboot.RebootedItselfRecently(time.Now().Add(-uptime), time.Now())
+	if err != nil {
+		c.config.Log.Error(err, "failed to read self reboot marker")
+	}
+	if rebooted {
+		c.config.Log.Info("peers report this node as unhealthy, but it rebooted itself recently, not rebooting again")
+		return canBeReached, false
+	}
+	return canBeReached, cpUnhealthy
 }
