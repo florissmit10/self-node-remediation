@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -38,11 +39,13 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	pkgruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	runtimecache "sigs.k8s.io/controller-runtime/pkg/cache"
@@ -147,9 +150,10 @@ func main() {
 
 	// Fetch the TLS profile from the APIServer resource
 	isOpenShift := true
-	fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer fetchCancel()
-	tlsProfile, err := openshifttls.FetchAPIServerTLSProfile(fetchCtx, setupClient)
+	if !isManager {
+		stopStartupGuard = startStartupGuard(cfg)
+	}
+	tlsProfile, err := fetchTLSProfile(setupClient, isManager)
 	if err != nil {
 		if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
 			setupLog.Info("Not on OpenShift, using default TLS settings")
@@ -492,6 +496,10 @@ func initSelfNodeRemediationAgent(mgr manager.Manager) {
 	}
 
 	apiChecker := apicheck.New(apiConnectivityCheckConfig, controlPlaneManager)
+	if err = mgr.Add(startupGuardStopper{}); err != nil {
+		setupLog.Error(err, "failed to add startup guard stopper to the manager")
+		os.Exit(1)
+	}
 	if err = mgr.Add(apiChecker); err != nil {
 		setupLog.Error(err, "failed to add api-check to the manager")
 		os.Exit(1)
@@ -574,4 +582,110 @@ func printVersion() {
 	setupLog.Info(fmt.Sprintf("Operator Version: %s", version.Version))
 	setupLog.Info(fmt.Sprintf("Git Commit: %s", version.GitCommit))
 	setupLog.Info(fmt.Sprintf("Build Date: %s", version.BuildDate))
+}
+
+const minUptimeToRebootOnIsolatedStart = 5 * time.Minute
+
+func fetchTLSProfile(k8sClient client.Client, isManager bool) (configv1.TLSProfileSpec, error) {
+	if isManager {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return openshifttls.FetchAPIServerTLSProfile(ctx, k8sClient)
+	}
+
+	interval := getDurEnvVarOrDie("API_CHECK_INTERVAL")
+	timeout := getDurEnvVarOrDie("API_SERVER_TIMEOUT")
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		profile, err := openshifttls.FetchAPIServerTLSProfile(ctx, k8sClient)
+		cancel()
+		if !isAPIServerUnreachable(err) {
+			return profile, err
+		}
+		setupLog.Error(err, "api server unreachable while starting the agent")
+		time.Sleep(interval)
+	}
+}
+
+func isAPIServerUnreachable(err error) bool {
+	if err == nil || meta.IsNoMatchError(err) {
+		return false
+	}
+	var status apierrors.APIStatus
+	return !errors.As(err, &status)
+}
+
+func rebootIfIsolatedOnStart() {
+	uptime, err := utils.GetLinuxUptime()
+	if err != nil {
+		setupLog.Error(err, "failed to get node's uptime")
+		return
+	}
+	if uptime < minUptimeToRebootOnIsolatedStart {
+		setupLog.Info("api server unreachable since the agent started, but the node booted recently, waiting for the api server", "uptime", uptime)
+		return
+	}
+	softwareRebootEnabled, err := watchdog.IsSoftwareRebootEnabled()
+	if err != nil || !softwareRebootEnabled {
+		setupLog.Info("api server unreachable since the agent started, but software reboot is disabled")
+		return
+	}
+	setupLog.Info("api server unreachable since the agent started, rebooting", "uptime", uptime)
+	if err := reboot.NewWatchdogRebooter(nil, ctrl.Log.WithName("rebooter")).Reboot(); err != nil {
+		setupLog.Error(err, "failed to reboot")
+	}
+}
+
+var stopStartupGuard = func() {}
+
+type startupGuardStopper struct{}
+
+func (startupGuardStopper) Start(_ context.Context) error {
+	stopStartupGuard()
+	return nil
+}
+
+func (startupGuardStopper) NeedLeaderElection() bool {
+	return false
+}
+
+func startStartupGuard(cfg *rest.Config) func() {
+	interval := getDurEnvVarOrDie("API_CHECK_INTERVAL")
+	timeout := getDurEnvVarOrDie("API_SERVER_TIMEOUT")
+	threshold := getIntEnvVarOrDie("MAX_API_ERROR_THRESHOLD")
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		setupLog.Error(err, "failed to create the startup guard client")
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		failures := 0
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(interval):
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			err := cs.Discovery().RESTClient().Get().AbsPath("/readyz").Param("exclude", "shutdown").Do(ctx).Error()
+			cancel()
+			if err == nil {
+				failures = 0
+				continue
+			}
+			failures++
+			setupLog.Error(err, "api server not ready while starting the agent", "failures", failures)
+			if failures >= threshold {
+				rebootIfIsolatedOnStart()
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			setupLog.Info("agent started, stopping the startup guard")
+			close(done)
+		})
+	}
 }
