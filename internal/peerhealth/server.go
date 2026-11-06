@@ -118,6 +118,9 @@ func (s *Server) IsHealthy(ctx context.Context, request *HealthRequest) (*Health
 
 	// return healthy only if no snr matches that node
 	for i := range snrs.Items {
+		if snrs.Items[i].DeletionTimestamp != nil {
+			continue
+		}
 		snrMatches, _, err := controller.IsSNRMatching(ctx, s.c, &snrs.Items[i], nodeName, request.GetMachineName(), s.log)
 		if err != nil {
 			s.log.Error(err, "failed to check if SNR matches node")
